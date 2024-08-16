@@ -1,4 +1,4 @@
-# Previsao de consumo usando flower
+# FederadoEnergia
 
 Aprendizado federado aplicado em previsao de series temporais de dados de consumo de energia
 

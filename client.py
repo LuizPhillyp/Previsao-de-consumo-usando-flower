@@ -27,11 +27,7 @@ class FlowerClient(fl.client.NumPyClient):
     def fit(self, parameters, config):
 
         self.model.set_weights(parameters)
-        history = self.model.fit(
-            self.x_train,
-            self.y_train,
-            validation_split=0.1,
-        )
+        history = self.model.fit(self.x_train, self.y_train, validation_data=(self.x_test, self.y_test), epochs=100, batch_size=200)
 
         return self.model.get_weights(), len(self.x_train), {}
 
@@ -56,53 +52,49 @@ def main() -> None:
     args = parser.parse_args()
 
     file = pd.read_csv("dsV4.csv", header=0, index_col=0, parse_dates=True, sep=";", decimal=",")
-    series = file.iloc[:, args.client_id-1]
+    data = file.iloc[:, args.client_id-1]
 
+    index = file.index.values
+    index = pd.to_datetime(index, format='%d/%m/%Y %H:%M')
 
-    horizon = 24 # o numero de steps para serem previstos no futuro (so faz sentido para previsao em multistep)
-    window_size = 64 # o numero de steps no passado que seram usados como features
+    #Preparacao dos features e targets
 
+    window = 24             #Quantas horas passadas serao usadas de input
+    horizon = 24            #Quantas horas futuras serao previstas
 
-    n_samples = len(series) - window_size
-    target_size = 1
+    refresh_period = 24     #Quantas horas ate pegar um novo input
 
-    x = np.zeros(shape=(n_samples, window_size))
-    y = np.zeros(shape=(n_samples, target_size))
+    #Aplicacao mais eficiente de janelas deslizantes
+    x = np.array([data[i:i+window] for i in range(0, len(data) - window - horizon + 1, refresh_period)])
+    y = np.array([data[i+window:i+window+horizon] for i in range(0, len(data) - window - horizon + 1, refresh_period)])
+    x_index = np.array([index[i:i+window] for i in range(0, len(index) - window - horizon + 1, refresh_period)])
+    y_index = np.array([index[i+window:i+window+horizon] for i in range(0, len(index) - window - horizon + 1, refresh_period)])
 
-    for t in range(n_samples):
-        x[t] = series[t:window_size + t]
-        y[t] = series[window_size + t]
+    #Prepara x para a entrada da ANN
+    x = x.reshape((x.shape[0], window, 1))
 
-    x = x.reshape(-1, window_size, 1)
+    #Split dos dados de treino e teste
+    from sklearn.model_selection import train_test_split
+    x_train, x_test, y_train, y_test, x_train_index, x_test_index, y_train_index, y_test_index = train_test_split(
+        x, y, x_index, y_index, test_size=0.25, shuffle=False
+    )
 
-    
-    # identifica qual fracao do dataset sera usado para testes (o restante sera para o treinamento)
-    split = n_samples // 4
+    # Rede neural baseada em LSTM's e CNN's
+    from tensorflow.keras.models import Sequential
+    from tensorflow.keras.layers import Conv1D, LSTM, Dense, Activation, MaxPooling1D, Dropout, Input
 
-
-    x_train = x[:n_samples - split]
-    x_test = x[-split:]
-
-    y_train = y[:n_samples - split]
-    y_test = y[-split:]
-
-
-    # determinacao do modelo (pode ser alterado)
-    model = tf.keras.models.Sequential([
-        tf.keras.layers.Conv1D(window_size, kernel_size=3, padding='causal', strides=1, input_shape=(x_train.shape[1], x_train.shape[2])),
-        tf.keras.layers.Activation('relu'),
-        tf.keras.layers.MaxPooling1D(strides=2),
-        tf.keras.layers.Conv1D(64, kernel_size=3, padding='causal', strides=1),
-        tf.keras.layers.Activation('relu'),
-        tf.keras.layers.LSTM(32, return_sequences=False),
-        tf.keras.layers.Activation('tanh'),
-        tf.keras.layers.Dense(32),
-        tf.keras.layers.Dense(1)
-    ], name="lstm_cnn")
-
+    model = Sequential([
+        Input(shape=(window, 1)),
+        Conv1D(filters=32, kernel_size=2, padding='causal', strides=2),
+        MaxPooling1D(pool_size=2, strides=2),
+        Activation('relu'),
+        LSTM(32, return_sequences=False),
+        Activation('tanh'),
+        Dense(128, activation='relu'),
+        Dense(horizon)
+    ])
     optimizer = tf.keras.optimizers.Adam(learning_rate=0.001)
-    model.compile(loss='mse', optimizer=optimizer, metrics=['mae'])
-
+    model.compile(loss='mae', optimizer=optimizer, metrics=['mae'])
 
     #inicializacao do cliente
     client = FlowerClient(model, x_train, y_train, x_test, y_test, args.client_id).to_client()
@@ -114,37 +106,27 @@ def main() -> None:
     #o restante do codigo ira executar apenas quando todos os rounds acabaram
 
 
-    #determina se o programa ira prever mais de um step no futuro
-    multistep = False
-    if multistep:
+    #previsao dos valores teste
+    y_pred = model.predict(x_test)
 
-        predictions = np.zeros(shape=y_test.shape)
-        last_input = x_test[0]
+    df = pd.DataFrame({'real':y_test.flatten(), 'previsto':y_pred.flatten()}, index=y_test_index.flatten())
+    df.index.name = 'timestamp'
 
-        for i in range(horizon):
-            p = model.predict(last_input.reshape(1, -1, 1))[0, 0]
-            predictions[i] = p
-            last_input = np.roll(last_input, -1)
-            last_input[-1] = p
-    
-    else:
-         
-         predictions = model.predict(x_test)
+    #arquivo com previsao de todos os valores teste de cada cliente
+    df.to_csv(f'./previsoes/client_{args.client_id}/previsao_client{args.client_id}.csv')
 
-    # definicao das metricas (pode ser alterado)
-    r2 = r2_score(y_test[:horizon], predictions[:horizon])
-    mae = mean_absolute_error(y_test[:horizon], predictions[:horizon])
-    mse = mean_squared_error(y_test[:horizon], predictions[:horizon])
+    from sklearn.metrics import r2_score, mean_absolute_error, mean_squared_error
+
+    # calculo das metricas
+    r2 = r2_score(df['real'], df['previsto'])
+    mae = mean_absolute_error(df['real'], df['previsto'])
+    mse = mean_squared_error(df['real'], df['previsto'])
     rmse = np.sqrt(mse)
 
-
-    #o segmento a seguir cria o arquivo csv com as metricas
-    #ele garante que os clientes nao vao conseguir escrever
-    #no arquivo simultaneamente
-
-    metrics_file = 'metrics.csv'
+    metrics_file = './metricas/metricas_clientes.csv'
     lock = FileLock(metrics_file + ".lock")
 
+    # concatenando as metricas no arquivo das metricas de cada cliente
     with lock:
         file_exists = os.path.isfile(metrics_file)
         with open(metrics_file, mode='a') as f:
@@ -152,33 +134,63 @@ def main() -> None:
                 f.write("Client ID,R2,MAE,MSE,RMSE\n")
             f.write(f"{args.client_id},{r2},{mae},{mse},{rmse}\n")
 
-    #segmento para plotar os graficos. Ele apenas plota o target do segmento de teste
-    #contra a previsao feita pelo modelo
 
-    timestamps = file.index[-split:]
-    timestamps = pd.to_datetime(timestamps, dayfirst=True)
-    
-    plt.figure()
-    plt.plot(timestamps[:horizon], y_test[:horizon], label='Actual', marker='.')
-    plt.plot(timestamps[:horizon], predictions[:horizon], label='Predicted', marker='.')
+    #Separando as previsoes por dia
+    df['hour'] = df.index.hour
+    df['date'] = df.index.date
 
-    plt.gca().xaxis.set_major_locator(mdates.HourLocator(interval=1))
-    plt.gca().xaxis.set_minor_locator(mdates.HourLocator(interval=1))
-    plt.gca().xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
-    plt.gca().xaxis.set_minor_formatter(mdates.DateFormatter('%H:%M'))
+    # Formatacao do horario
+    df['hour'] = df['hour'].apply(lambda x: f'{x:02d}:00:00')
 
-    for ts in timestamps[:horizon]:
-        if ts.hour == 0:
-            plt.axvline(x=ts, color='gray', linestyle='--', linewidth=0.5)
-            plt.text(ts, plt.ylim()[1]*0.75, ts.strftime('%Y-%m-%d'), rotation=90, verticalalignment='bottom')
+    pivot_df = df.pivot(index='hour', columns='date', values='real')
+    pivot_df.columns.name = None
+    pivot_df.to_csv(f'./previsoes/client_{args.client_id}/real_dias_client{args.client_id}.csv')
 
-    plt.xlabel('Hour')
-    plt.ylabel('Value')
-    plt.legend()
-    plt.title(f'Client {args.client_id} Predictions')
-    plt.xticks(rotation=45)
-    plt.tight_layout()
-    plt.savefig(f'./plots/previsao_cliente_{args.client_id}.png')
+    pivot_df = df.pivot(index='hour', columns='date', values='previsto')
+    pivot_df.columns.name = None
+    pivot_df.to_csv(f'./previsoes/client_{args.client_id}/previsto_dias_client{args.client_id}.csv')
+
+    # calculo das metricas para cada dia
+    real_pivot = pd.read_csv(f'./previsoes/client_{args.client_id}/real_dias_client{args.client_id}.csv', index_col=0)
+    previsto_pivot = pd.read_csv(f'./previsoes/client_{args.client_id}/previsto_dias_client{args.client_id}.csv', index_col=0)
+
+    metrics_df = pd.DataFrame(columns=['R2', 'MAE', 'MSE', 'RMSE'], index=real_pivot.columns)
+    metrics_df.index.name = 'date'
+
+    for col in real_pivot.columns:
+        y_true = real_pivot[col].dropna()
+        y_prev = previsto_pivot[col].dropna()
+        
+        if len(y_true) == len(y_prev):
+            r2 = r2_score(y_true, y_prev)
+            mae = mean_absolute_error(y_true, y_prev)
+            mse = mean_squared_error(y_true, y_prev)
+            rmse = np.sqrt(mse)
+            
+            metrics_df.loc[col] = [r2, mae, mse, rmse]
+
+    metrics_df.to_csv(f'./metricas/metricas_por_dia_client{args.client_id}.csv')
+
+
+    # plot de duas instancias de previsao
+    n_plots = 2
+    fig, ax = plt.subplots(n_plots, 1, sharex=True)
+
+    for i in range(n_plots):
+        ax[i].plot(x_test_index[i], x_test[i], label='Input')
+        ax[i].plot(y_test_index[i], y_pred[i], label='Previsao')
+        ax[i].plot(y_test_index[i], y_test[i], label='Valor Real')
+
+        ax[i].set_xlabel('Tempo')
+        ax[i].set_ylabel('Consumo')
+
+        ax[i].xaxis.set_major_formatter(mdates.ConciseDateFormatter(mdates.AutoDateLocator()))
+        ax[i].xaxis.set_minor_locator(mdates.HourLocator())
+
+        ax[i].grid()
+        ax[i].legend()
+
+    fig.savefig(f'./plots/previsao_client{args.client_id}.png')
 
 if __name__ == "__main__":
     main()
