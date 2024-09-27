@@ -27,7 +27,7 @@ class FlowerClient(fl.client.NumPyClient):
     def fit(self, parameters, config):
 
         self.model.set_weights(parameters)
-        history = self.model.fit(self.x_train, self.y_train, validation_data=(self.x_test, self.y_test), epochs=1, batch_size=200)
+        history = self.model.fit(self.x_train, self.y_train, validation_data=(self.x_test, self.y_test), epochs=100, batch_size=200)
 
         return self.model.get_weights(), len(self.x_train), {}
 
@@ -57,19 +57,20 @@ def main() -> None:
     index = file.index.values
     index = pd.to_datetime(index, format='%d/%m/%Y %H:%M')
 
-    # Define constants for windowing
-    window = 24             # Full day as input (00:00 to 00:00 of the next day)
-    horizon = 24            # Predict one day after the end of the input sequence
-    refresh_period = 1     # Refresh every 24 hours
+    #Preparacao dos features e targets
 
-    # Prepare sliding windows of data
+    window = 24             #Quantas horas passadas serao usadas de input
+    horizon = 24            #Quantas horas futuras serao previstas
+
+    refresh_period = 24     #Quantas horas ate pegar um novo input
+
+    #Aplicacao mais eficiente de janelas deslizantes
     x = np.array([data[i:i+window] for i in range(0, len(data) - window - horizon + 1, refresh_period)])
-    y = np.array([data[i+window+horizon-1] for i in range(0, len(data) - window - horizon + 1, refresh_period)])
-
-    # Prepare corresponding indices
+    y = np.array([data[i+window:i+window+horizon] for i in range(0, len(data) - window - horizon + 1, refresh_period)])
     x_index = np.array([index[i:i+window] for i in range(0, len(index) - window - horizon + 1, refresh_period)])
-    y_index = np.array([index[i+window+horizon-1] for i in range(0, len(index) - window - horizon + 1, refresh_period)])
-        #Prepara x para a entrada da ANN
+    y_index = np.array([index[i+window:i+window+horizon] for i in range(0, len(index) - window - horizon + 1, refresh_period)])
+
+    #Prepara x para a entrada da ANN
     x = x.reshape((x.shape[0], window, 1))
 
     #Split dos dados de treino e teste
@@ -90,7 +91,7 @@ def main() -> None:
         LSTM(32, return_sequences=False),
         Activation('tanh'),
         Dense(128, activation='relu'),
-        Dense(1)
+        Dense(horizon)
     ])
     optimizer = tf.keras.optimizers.Adam(learning_rate=0.001)
     model.compile(loss='mae', optimizer=optimizer, metrics=['mae'])
@@ -104,10 +105,11 @@ def main() -> None:
 
     #o restante do codigo ira executar apenas quando todos os rounds acabaram
 
+
     #previsao dos valores teste
     y_pred = model.predict(x_test)
 
-    df = pd.DataFrame({'real':y_test, 'previsto':y_pred.flatten()}, index=y_test_index)
+    df = pd.DataFrame({'real':y_test.flatten(), 'previsto':y_pred.flatten()}, index=y_test_index.flatten())
     df.index.name = 'timestamp'
 
     #arquivo com previsao de todos os valores teste de cada cliente
@@ -170,13 +172,14 @@ def main() -> None:
     metrics_df.to_csv(f'./metricas/metricas_por_dia_client{args.client_id}.csv')
 
 
-    # plot de n_plots instancias de previsao
-    n_plots = 2
+    # plot de duas instancias de previsao
+    n_plots = 5
     fig, ax = plt.subplots(n_plots, 1, sharex=True)
 
     for i in range(n_plots):
-        ax[i].plot(y_test_index[:24*(i+1)], y_pred[:24*(i+1)], label='Previsao')
-        ax[i].plot(y_test_index[:24*(i+1)], y_test[:24*(i+1)], label='Valor Real')
+        ax[i].plot(x_test_index[i], x_test[i], label='Input')
+        ax[i].plot(y_test_index[i], y_pred[i], label='Previsao')
+        ax[i].plot(y_test_index[i], y_test[i], label='Valor Real')
 
         ax[i].set_xlabel('Tempo')
         ax[i].set_ylabel('Consumo')
