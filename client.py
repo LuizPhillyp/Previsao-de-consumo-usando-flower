@@ -57,19 +57,19 @@ def main() -> None:
     index = file.index.values
     index = pd.to_datetime(index, format='%d/%m/%Y %H:%M')
 
-    # Define constants for windowing
-    window = 24             # Full day as input (00:00 to 00:00 of the next day)
-    horizon = 24            # Predict one day after the end of the input sequence
-    refresh_period = 1     # Refresh every 24 hours
+    window = 24             
+    horizon = 24            
+    refresh_period = 1     
 
-    # Prepare sliding windows of data
+
     x = np.array([data[i:i+window] for i in range(0, len(data) - window - horizon + 1, refresh_period)])
     y = np.array([data[i+window+horizon-1] for i in range(0, len(data) - window - horizon + 1, refresh_period)])
 
-    # Prepare corresponding indices
+
     x_index = np.array([index[i:i+window] for i in range(0, len(index) - window - horizon + 1, refresh_period)])
     y_index = np.array([index[i+window+horizon-1] for i in range(0, len(index) - window - horizon + 1, refresh_period)])
-        #Prepara x para a entrada da ANN
+    
+    #Prepara x para a entrada da ANN
     x = x.reshape((x.shape[0], window, 1))
 
     #Split dos dados de treino e teste
