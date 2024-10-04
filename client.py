@@ -111,7 +111,7 @@ def main() -> None:
     df.index.name = 'timestamp'
 
     #arquivo com previsao de todos os valores teste de cada cliente
-    df.to_csv(f'./previsoes/client_{args.client_id}/previsao_client{args.client_id}.csv')
+    df.to_csv(f'./previsoes/previsao_client{args.client_id}.csv')
 
     from sklearn.metrics import r2_score, mean_absolute_error, mean_squared_error
 
@@ -121,54 +121,9 @@ def main() -> None:
     mse = mean_squared_error(df['real'], df['previsto'])
     rmse = np.sqrt(mse)
 
-    metrics_file = './metricas/metricas_clientes.csv'
-    lock = FileLock(metrics_file + ".lock")
-
-    # concatenando as metricas no arquivo das metricas de cada cliente
-    with lock:
-        file_exists = os.path.isfile(metrics_file)
-        with open(metrics_file, mode='a') as f:
-            if not file_exists:
-                f.write("Client ID,R2,MAE,MSE,RMSE\n")
-            f.write(f"{args.client_id},{r2},{mae},{mse},{rmse}\n")
-
-
-    #Separando as previsoes por dia
-    df['hour'] = df.index.hour
-    df['date'] = df.index.date
-
-    # Formatacao do horario
-    df['hour'] = df['hour'].apply(lambda x: f'{x:02d}:00:00')
-
-    pivot_df = df.pivot(index='hour', columns='date', values='real')
-    pivot_df.columns.name = None
-    pivot_df.to_csv(f'./previsoes/client_{args.client_id}/real_dias_client{args.client_id}.csv')
-
-    pivot_df = df.pivot(index='hour', columns='date', values='previsto')
-    pivot_df.columns.name = None
-    pivot_df.to_csv(f'./previsoes/client_{args.client_id}/previsto_dias_client{args.client_id}.csv')
-
-    # calculo das metricas para cada dia
-    real_pivot = pd.read_csv(f'./previsoes/client_{args.client_id}/real_dias_client{args.client_id}.csv', index_col=0)
-    previsto_pivot = pd.read_csv(f'./previsoes/client_{args.client_id}/previsto_dias_client{args.client_id}.csv', index_col=0)
-
-    metrics_df = pd.DataFrame(columns=['R2', 'MAE', 'MSE', 'RMSE'], index=real_pivot.columns)
-    metrics_df.index.name = 'date'
-
-    for col in real_pivot.columns:
-        y_true = real_pivot[col].dropna()
-        y_prev = previsto_pivot[col].dropna()
-        
-        if len(y_true) == len(y_prev):
-            r2 = r2_score(y_true, y_prev)
-            mae = mean_absolute_error(y_true, y_prev)
-            mse = mean_squared_error(y_true, y_prev)
-            rmse = np.sqrt(mse)
-            
-            metrics_df.loc[col] = [r2, mae, mse, rmse]
-
-    metrics_df.to_csv(f'./metricas/metricas_por_dia_client{args.client_id}.csv')
-
+    file = open(f'./metricas/metricas_cliente{args.client_id}.csv', 'w')
+    file.write('r2,mae,mse,rmse')
+    file.write(f'{r2},{mae},{mse},{rmse}')
 
     # plot de n_plots instancias de previsao
     n_plots = 2

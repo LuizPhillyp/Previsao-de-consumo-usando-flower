@@ -38,31 +38,29 @@ x_train, x_test, y_train, y_test, x_train_index, x_test_index, y_train_index, y_
 )
 
 
-print(y_test.size)
+df_previsao = pd.read_csv('./previsoes/previsao_client9.csv')
+
+prev_index = df_previsao['timestamp'].values
+prev = df_previsao['previsto'].values
+
+n_plots = 1
+fig, ax = plt.subplots(n_plots, 1, sharex=True)
 
 
-# print(x_df)
+for i in range(24):
+    ax.plot(index[:72], data[:72], label='Valor Real', linestyle='--', color='black')
+    ax.plot(x_index[i], x[i], label='Input', color='blue')
+    ax.plot(prev_index[0:i+1], prev[0:i+1], label='Output', color='orange', marker='o')
 
-# n_plots = 2
-# fig, ax = plt.subplots(n_plots, 1, sharex=True)
+    ax.set_xlabel('Data')
+    ax.set_ylabel('Consumo')
 
-# for i in range(n_plots):
+    ax.xaxis.set_major_formatter(mdates.ConciseDateFormatter(mdates.AutoDateLocator()))
+    ax.xaxis.set_minor_locator(mdates.HourLocator())
 
-#     ax[i].plot(index[:48], data[:48], label='Actual', linestyle='--', color='black')
-#     ax[i].plot(x_index[i], x[i], label='Input', color='blue')
-#     ax[i].scatter(y_index[i], y[i], label='Output', color='orange')
-    
-    
-
-#     ax[i].set_xlabel('Data')
-#     ax[i].set_ylabel('Consumo')
-
-#     ax[i].xaxis.set_major_formatter(mdates.ConciseDateFormatter(mdates.AutoDateLocator()))
-#     ax[i].xaxis.set_minor_locator(mdates.HourLocator())
-
-#     ax[i].grid()
-#     ax[i].legend()
-
-# fig.savefig('previsao.png')
+    ax.grid()
+    ax.legend()
+    print('savingfig')
+    fig.savefig(f'previsao{i}.png')
 
 
